@@ -76,45 +76,83 @@ syscall
 init:
 la $s0, COLOR_MAP   # saved constant: color map array's address
 la $s1 board    # saved constant: board's memory address
-lw $s2, ADDRESS_DSPL_BOARD_START    # saved constant: starting address of the board on the bitmap
-jal draw_init
+lw $s2, ADDR_DSPL    # saved constant: address of bitmap display
+jal draw_initial_screen
 j game_loop
 
 # $t0: loop index; $t1: current address
-draw_init:
+draw_initial_screen:
 addi $sp, $sp, -4   # store in call stack
 sw $ra, 0($sp)
 add $t0, $zero, $zero
-j draw_init_loop
+j draw_initial_screen_loop
 
 # $t0: current board index
-draw_init_loop:
-beq $t0, 40, draw_init_end   # fill first 5 rows * 8 per row
+draw_initial_screen_loop:
+beq $t0, 40, draw_initial_screen_end   # fill first 5 rows * 8 per row
 jal rand
-jal save_color      # argument is $a0 (color index), $t0 (board index)
+move $a0, $v1
+move $a1, $t0
+jal save_color
 addi $t0, $t0, 1    # next byte on the board
-j draw_init_loop
+j draw_initial_screen_loop
 
-draw_init_end:
+draw_initial_screen_end:
 jal paint_board
 lw $ra, 0($sp)      # pop the stack
 add $sp, $sp, 4
 jr $ra
 
-# $a0: color index
-save_color:
-addu $t1, $t0, $s1  # calculate address for board byte
-sb $a0, 0($t1)
+keyboard_input:
+# TODO
 jr $ra
 
+
+########################## Util functions ###############################
+# randomly select one of RGBY color index (1-4)
+# returns: $v0
+# uses: $v0, $a0, $a1
 rand:
 li $v0, 42
 li $a0, 0
 li $a1, 4
 syscall
-addi $a0, $a0, 1
+addi $v1, $a0, 1
 jr $ra
 
+# args: $a1: index
+# returns: $v1: value
+color_index_to_value:
+sll $a1, $a1, 2  # calculate offset for color map
+addu $a1, $a1, $s0  # calculate address in color map
+lw $v1, 0($a1)     # calculate color value
+jr $ra
+
+# args: 
+# $a1: y-coordinate
+# $a2: x-coordinate
+# $a3: color value
+# uses: $t6: temporary mul factor
+paint_pixel:
+li $t6, 32
+mul  $a1, $a1, $t6   # row * 32 (since 32 pixels per row)
+addu $a1, $a1, $a2
+li $t6, 4
+mul $a1, $a1, $t6  # final offset = (row * 32 + col) * 4
+addu $a1, $a1, $s2  # address of bitmap display (top left) + final offset = final address
+sw $a3, 0($a1)  # paint the pixel
+jr $ra
+
+# save color to the board (does not print) given the (flat) index of the board
+# Args
+# $a0: color index, $a1: board index
+save_color:
+addu $a1, $a1, $s1  # calculate address for board byte
+sb $a0, 0($a1)
+jr $ra
+
+# print the board on display based on the stored board color values
+# uses:
 # $t0: board index
 paint_board:
 addi $sp, $sp, -4   # store in call stack
@@ -134,34 +172,31 @@ lw $ra, 0($sp)      # pop the stack
 add $sp, $sp, 4
 jr $ra
 
-# args: $a0 - given board index to print
+# args: $a0 - given board index (flat index) to print
 # $t2: pixel address to print
 # $t1: color index (and updated to color map address)
 # $t3: current color value
-# $t4: row on the board (later on the display)
-# $t5: column on the board (later on the display)
+# $t4: row on the board
+# $t5: column on the board
 # $t7: current board address
 paint_cell:
 addu $t7, $a0, $s1  # board adddress
 # calculate color value
-lb $t1, 0($t7)  # get color index from board
-sll $t1, $t1, 2  # calculate offset for color map
-addu $t1, $t1, $s0  # calculate address in color map
-lw $t3, 0($t1)     # calculate color value
+lb $a1, 0($t7)  # get color index from board
+add $sp, $sp, -4
+sw $ra, 0($sp)
+jal color_index_to_value
+lw $ra, 0($sp)
+add $sp, $sp, 4
 # calculate display address
-srl $t4, $a0, 3
-andi $t5, $a0, 7
-li $t6, 32
-mul $t4, $t4, $t6   # row * 32 (since 32 pixels per row)
-li $t6, 4
-mul $t4, $t4, $t6   # (row * 32) * 4 (each pixel is 4 bytes)
-mul $t5, $t5, $t6   # col * 4
-addu $t2, $t4, $t5  # final offset = (row * 32 + col) * 4
-addu $t2, $t2, $s2  # address of board start + final offset = final address
-sw $t3, 0($t2)  # paint the pixel
-jr $ra
-
-
-keyboard_input:
-# TODO
+srl $t4, $a0, 3     # row on the board
+andi $t5, $a0, 7    # column on the board
+addi $a1, $t4, 6    # y-coordinate on the bitmap (starting pixel of board (3, 7))
+addi $a2, $t5, 2    # x-coordinate on the bitmap
+move $a3, $v1
+add $sp, $sp, -4
+sw $ra, 0($sp)
+jal paint_pixel
+lw $ra, 0($sp)
+add $sp, $sp, 4
 jr $ra
