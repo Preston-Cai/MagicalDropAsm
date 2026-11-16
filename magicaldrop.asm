@@ -14,7 +14,17 @@
 # - Display height in pixels:   256
 # - Base Address for Display:   0x10008000 ($gp)
 ##############################################################################
+.macro PUSH (%reg)
+    addiu $sp, $sp, -4
+    sw %reg, 0($sp)
+.end_macro
 
+.macro POP (%reg)
+    lw %reg, 0($sp)
+    addiu $sp, $sp, 4
+.end_macro
+
+##############################################################################
     .data
 ##############################################################################
 # Immutable Data
@@ -26,7 +36,7 @@ ADDR_DSPL:
 ADDR_KBRD:
     .word 0xffff0000
     
-COLOR_MAP:  # color index: 1 is red, 2 is green, 5 is white, ...
+COLOR_MAP:  # color index: 0 is empty, 1 is red, 2 is green, 5 is white, ...
     .word 0x00000000    # empty (black)
     .word 0x00ff0000    # Red
     .word 0x0000ff00    # Green
@@ -39,10 +49,16 @@ ADDRESS_DSPL_BOARD_START:
 ##############################################################################
 # Mutable Data
 ##############################################################################
-board:  # containing colors (each byte contains the color index)
+board:  # containing colors (a byte per cell, each byte contains the color index)
     .space 128  # 8 columns, 16 rows
-mark:   # marked to be destroyed
-    .space 128
+score:
+    .word 0   # maximum score 2^32
+carried_count:
+    .byte 0
+carried_color:  # color index only needs 1 byte
+    .space 1
+player_x:
+    .byte 3    # position of player on the board (0-7, as there are 8 columns)
 ##############################################################################
 # Code
 ##############################################################################
@@ -82,8 +98,7 @@ j game_loop
 
 # $t0: loop index; $t1: current address
 draw_initial_screen:
-addi $sp, $sp, -4   # store in call stack
-sw $ra, 0($sp)
+PUSH ($ra)
 add $t0, $zero, $zero
 j draw_initial_screen_loop
 
@@ -99,8 +114,7 @@ j draw_initial_screen_loop
 
 draw_initial_screen_end:
 jal paint_board
-lw $ra, 0($sp)      # pop the stack
-add $sp, $sp, 4
+POP ($ra)
 jr $ra
 
 keyboard_input:
@@ -128,6 +142,38 @@ addu $a1, $a1, $s0  # calculate address in color map
 lw $v1, 0($a1)     # calculate color value
 jr $ra
 
+# update the board (does not print) given x, y coordinate and color
+# Args:
+# $a1: y-coordinate
+# $a2: x-coordinate
+# $a3: color index
+set_board_color: 
+srl $a1, $a1, 3
+addu $a1, $a1, $a2  # 8 * y + x
+addu $a1, $s1, $a1  # board address + offset
+sw $a3, 0($a1)
+
+# get the board's color index at x, y
+# Args:
+# $a1: y-coordinate
+# $a2: x-coordinate
+# Returns
+# $v1: color index
+get_board_color:
+srl $a1, $a1, 3
+addu $a1, $a1, $a2  # 8 * y + x
+addu $a1, $s1, $a1  # board address + offset
+lb $v1, 0($a1)
+
+# save color to the board (does not print) given the (flat) index of the board
+# Args
+# $a0: color index, $a1: board index
+save_color:
+addu $a1, $a1, $s1  # calculate address for board byte
+sb $a0, 0($a1)
+jr $ra
+
+# paint pixel on the bitmap
 # args: 
 # $a1: y-coordinate
 # $a2: x-coordinate
@@ -143,20 +189,11 @@ addu $a1, $a1, $s2  # address of bitmap display (top left) + final offset = fina
 sw $a3, 0($a1)  # paint the pixel
 jr $ra
 
-# save color to the board (does not print) given the (flat) index of the board
-# Args
-# $a0: color index, $a1: board index
-save_color:
-addu $a1, $a1, $s1  # calculate address for board byte
-sb $a0, 0($a1)
-jr $ra
-
 # print the board on display based on the stored board color values
 # uses:
 # $t0: board index
 paint_board:
-addi $sp, $sp, -4   # store in call stack
-sw $ra, 0($sp)
+PUSH ($ra)
 add $t0, $zero, $zero
 j paint_board_loop
 
@@ -168,8 +205,7 @@ addi $t0, $t0, 1 # update offset
 j paint_board_loop
 
 paint_board_end:
-lw $ra, 0($sp)      # pop the stack
-add $sp, $sp, 4
+POP ($ra)
 jr $ra
 
 # args: $a0 - given board index (flat index) to print
@@ -183,20 +219,16 @@ paint_cell:
 addu $t7, $a0, $s1  # board adddress
 # calculate color value
 lb $a1, 0($t7)  # get color index from board
-add $sp, $sp, -4
-sw $ra, 0($sp)
+PUSH ($ra)
 jal color_index_to_value
-lw $ra, 0($sp)
-add $sp, $sp, 4
+POP ($ra)
 # calculate display address
 srl $t4, $a0, 3     # row on the board
 andi $t5, $a0, 7    # column on the board
 addi $a1, $t4, 6    # y-coordinate on the bitmap (starting pixel of board (3, 7))
 addi $a2, $t5, 2    # x-coordinate on the bitmap
 move $a3, $v1
-add $sp, $sp, -4
-sw $ra, 0($sp)
+PUSH ($ra)
 jal paint_pixel
-lw $ra, 0($sp)
-add $sp, $sp, 4
+POP ($ra)
 jr $ra
