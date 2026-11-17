@@ -60,7 +60,6 @@ ADDRESS_DSPL_BOARD_START:
 .eqv WALL_TOP 6         # top wall y coordinate
 .eqv WALL_BOTTOM 23     # bottom wall y coordinate
 
-
 ##############################################################################
 # Mutable Data
 ##############################################################################
@@ -74,6 +73,30 @@ carried_color:  # color index only needs 1 byte
     .space 1
 player_x:
     .byte 3    # position of player on the board (0-7, as there are 8 columns)
+
+# Scoreboard letter bitmaps
+# All letters are 3x5. 0 means empty (black), 5 is white.
+LETTER_P:
+.byte 5,5,5
+.byte 5,0,5
+.byte 5,5,5
+.byte 5,0,0
+.byte 5,0,0
+
+LETTER_T:
+.byte 5,5,5
+.byte 0,5,0
+.byte 0,5,0
+.byte 0,5,0
+.byte 0,5,0
+
+LETTER_S:
+.byte 5,5,5
+.byte 5,0,0
+.byte 5,5,5
+.byte 0,0,5
+.byte 5,5,5
+
 ##############################################################################
 # Code
 ##############################################################################
@@ -111,6 +134,21 @@ lw $s2, ADDR_DSPL    # saved constant: address of bitmap display
 lw $s3, ADDR_KBRD   # saved_constant: address of keyboard input
 jal draw_initial_board
 jal paint_walls
+# load & draw P at (18, 7)
+la $a0, LETTER_P
+li $a1, 7
+li $a2, 18
+jal paint_letter
+# load & draw T at (22, 7)
+la $a0, LETTER_T
+li $a1, 7
+li $a2, 22
+jal paint_letter
+# load & draw S at (26, 7)
+la $a0, LETTER_S
+li $a1, 7
+li $a2, 26
+jal paint_letter
 jal paint_player
 j game_loop
 
@@ -457,7 +495,7 @@ paint_walls:
 # top wall, length 9
 li $a2, WALL_LEFT
 li $a1, WALL_TOP
-li $a3 WALL_COLOR
+li $a3, WALL_COLOR
 li $a0, 9
 PUSH($ra)
 jal paint_hline
@@ -485,6 +523,55 @@ li $a3, WALL_COLOR
 li $a0, 18
 PUSH($ra)
 jal paint_vline
+POP($ra)
+jr $ra
+
+# paint a given letter on the screen (P, T, or S)
+# color is already defined in the bitmap of each letter.
+#args:
+# $a0: letter address 
+# $a1: y-coordinate of top row
+# $a2: x-coordinate of leftmost column
+#uses:
+# $a0 (ends at $a0 + 15)
+# $a1 (ends at $a1 + 5)
+# $a3 (overwritten)
+# $t8, $t9 (row / col counters)
+# $v1 & $t6 from paint_pixel
+paint_letter:
+PUSH($ra)
+#init row counter
+li $t8, 0
+# init col counter
+li $t9, 0
+# iterate through rows
+ROW_LOOP: beq $t8, 5, ROW_LOOP_END
+# reset col counter to 0
+li $t9, 0
+# iterate through cols (nested)
+COL_LOOP: beq $t9, 3, COL_LOOP_END
+# load color from pointer
+lbu $a3, 0($a0)
+# paint pixel
+PUSH($a1)
+jal paint_pixel
+POP($a1)
+#increment x
+addi $a2, $a2, 1
+#increment col counter
+addi $t9, $t9, 1
+# advance pointer
+addi $a0, $a0, 1
+j COL_LOOP
+COL_LOOP_END:
+# reset x to x - 3
+addi $a2, $a2, -3
+# increment y
+addi $a1, $a1, 1
+# increment row counter
+addi $t8, $t8, 1
+j ROW_LOOP
+ROW_LOOP_END:
 POP($ra)
 jr $ra
 
