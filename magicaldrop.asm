@@ -91,38 +91,161 @@ syscall
     
 init:
 la $s0, COLOR_MAP   # saved constant: color map array's address
-la $s1 board    # saved constant: board's memory address
+la $s1, board    # saved constant: board's memory address
 lw $s2, ADDR_DSPL    # saved constant: address of bitmap display
-jal draw_initial_screen
+lw $s3, ADDR_KBRD   # saved_constant: address of keyboard input
+jal draw_initial_board
+jal paint_player
 j game_loop
 
 # $t0: loop index; $t1: current address
-draw_initial_screen:
+draw_initial_board:
 PUSH ($ra)
 add $t0, $zero, $zero
-j draw_initial_screen_loop
+j draw_initial_board_loop
 
 # $t0: current board index
-draw_initial_screen_loop:
-beq $t0, 40, draw_initial_screen_end   # fill first 5 rows * 8 per row
+draw_initial_board_loop:
+beq $t0, 40, draw_initial_board_end   # fill first 5 rows * 8 per row
 jal rand
 move $a0, $v1
 move $a1, $t0
 jal save_color
 addi $t0, $t0, 1    # next byte on the board
-j draw_initial_screen_loop
+j draw_initial_board_loop
 
-draw_initial_screen_end:
+draw_initial_board_end:
 jal paint_board
 POP ($ra)
 jr $ra
 
+# check and handle keyboard press
+# uses: $t1, $t2
 keyboard_input:
+PUSH ($ra)
+lw $t1, 0($s3)
+beq $t1, 1, handle_input
+j handle_end
+
+handle_input:
+lw $t1, 4($s3)   # key pressed in ascii
+beq $t1, 0x61, handle_left
+beq $t1, 0x64, handle_right
+beq $t1, 0x73, handle_grab      # key s
+beq $t1, 0x77, handle_throw     # key w
+
+handle_left:
+la $t1, player_x
+lb $t2, player_x
+beq $t2, 0, handle_end  # cannot move further left
+addi $t2, $t2, -1
+sb $t2, 0($t1)
+jal paint_player
+j handle_end
+
+handle_right:
+la $t1, player_x
+lb $t2, player_x
+beq $t2, 7, handle_end  # cannot move further right
+addi $t2, $t2, 1
+sb $t2, 0($t1)
+jal paint_player
+j handle_end
+
+handle_grab:
 # TODO
+j handle_end
+
+handle_throw:
+# TODO
+j handle_end
+
+handle_end:
+POP ($ra)
+jr $ra
+
+########################## Game-Specific Utils  #################################
+# repaint the player to the screen based on player_x, erasing the old position
+# uses: $a1, $a2, $a3, $t1
+paint_player:
+PUSH ($ra)
+jal clear_player_area
+lb $a2, player_x
+addiu $a2, $a2, 2    # player_x + 2 = player_x_on_bitmap
+# paint head (green)
+li $a1, 23
+li $a3, 2
+PUSH ($a2)
+jal paint_pixel
+POP ($a2)
+# paint body 1 (white)
+li $a1, 24
+li $a3, 5
+PUSH ($a2)
+jal paint_pixel
+POP ($a2)
+# paint body 2 (white)
+li $a1, 25
+li $a3, 5
+PUSH ($a2)
+jal paint_pixel
+POP ($a2)
+# paint balls
+lb $t1, carried_count
+lb $a3, carried_color
+li $a1, 26
+bne $t1, 0, paint_carried_balls
+j paint_carried_balls_end
+
+paint_carried_balls:
+beq $t1, 0, paint_carried_balls_end
+beq $a1, 32, paint_carried_balls_end
+PUSH ($a1)
+PUSH ($a2)
+PUSH ($a3)
+jal paint_pixel
+POP ($a3)
+POP ($a2)
+POP ($a1)
+addi $t1, $t1, -1
+addi $a1, $a1, 1
+j paint_carried_balls
+
+paint_carried_balls_end:
+POP ($ra)
+jr $ra
+
+# clear the area below the board
+# uses $t2, $t3 as x, y
+clear_player_area:
+li $t2, 2   # starting column: 2
+j clear_loop
+
+clear_loop:
+beq $t2, 10, clear_done   # end when reaching column 10
+li $t3, 23  # highest row of player area: 24th row
+j clear_col
+
+clear_col:
+beq $t3, 32, next_col   # end when reaching the bottom of bitmap
+move $a1, $t3
+move $a2, $t2
+li $a3, 0   # paint to black (empty)
+PUSH ($ra)
+jal paint_pixel
+POP ($ra)
+addiu $t3, $t3, 1
+j clear_col
+
+next_col:
+addiu $t2, $t2, 1
+j clear_loop
+
+clear_done:
 jr $ra
 
 
-########################## Util functions ###############################
+########################## General Util Functions ###############################
 # randomly select one of RGBY color index (1-4)
 # returns: $v0
 # uses: $v0, $a0, $a1
@@ -177,9 +300,16 @@ jr $ra
 # args: 
 # $a1: y-coordinate
 # $a2: x-coordinate
-# $a3: color value
+# $a3: color index
 # uses: $t6: temporary mul factor
 paint_pixel:
+PUSH ($a1)
+move $a1, $a3
+PUSH ($ra)
+jal color_index_to_value    # takes in $a1, the color index, and outputs $v1, the value
+POP ($ra)
+POP ($a1)
+move $a3, $v1
 li $t6, 32
 mul  $a1, $a1, $t6   # row * 32 (since 32 pixels per row)
 addu $a1, $a1, $a2
@@ -209,25 +339,16 @@ POP ($ra)
 jr $ra
 
 # args: $a0 - given board index (flat index) to print
-# $t2: pixel address to print
-# $t1: color index (and updated to color map address)
-# $t3: current color value
-# $t4: row on the board
-# $t5: column on the board
-# $t7: current board address
+# uses: $a1-$a3, $v1, $t4-$t7
 paint_cell:
 addu $t7, $a0, $s1  # board adddress
-# calculate color value
-lb $a1, 0($t7)  # get color index from board
-PUSH ($ra)
-jal color_index_to_value
-POP ($ra)
+lb $a3, 0($t7)  # get color index from board
 # calculate display address
 srl $t4, $a0, 3     # row on the board
 andi $t5, $a0, 7    # column on the board
 addi $a1, $t4, 6    # y-coordinate on the bitmap (starting pixel of board (3, 7))
 addi $a2, $t5, 2    # x-coordinate on the bitmap
-move $a3, $v1
+# paint pixel
 PUSH ($ra)
 jal paint_pixel
 POP ($ra)
