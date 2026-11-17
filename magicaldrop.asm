@@ -120,7 +120,7 @@ POP ($ra)
 jr $ra
 
 # check and handle keyboard press
-# uses: $t1, $t2
+# uses: see each case
 keyboard_input:
 PUSH ($ra)
 lw $t1, 0($s3)
@@ -131,9 +131,10 @@ handle_input:
 lw $t1, 4($s3)   # key pressed in ascii
 beq $t1, 0x61, handle_left
 beq $t1, 0x64, handle_right
-beq $t1, 0x73, handle_grab      # key s
-beq $t1, 0x77, handle_throw     # key w
+beq $t1, 0x77, handle_grab      # key w
+beq $t1, 0x73, handle_throw     # key s
 
+# uses: $t1, $t2
 handle_left:
 la $t1, player_x
 lb $t2, player_x
@@ -143,6 +144,7 @@ sb $t2, 0($t1)
 jal paint_player
 j handle_end
 
+# uses: $t1, $t2
 handle_right:
 la $t1, player_x
 lb $t2, player_x
@@ -152,9 +154,67 @@ sb $t2, 0($t1)
 jal paint_player
 j handle_end
 
+# precondition: carried_count = 0
+# uses: $t0-$t2, $a1, $a2, $v1
 handle_grab:
-# TODO
+lb $t0, carried_count
+bne $t0, 0, handle_end
+jal find_and_grab
+jal paint_board
+jal paint_player
 j handle_end
+
+find_and_grab:
+PUSH ($ra)
+lb $a2, player_x
+li $a1, 15  # start searching from the bottom
+j get_curr_color_loop
+
+get_curr_color_loop:
+bltz $a1, find_and_grab_end     # the entire col has no valid color
+PUSH ($a1)
+PUSH ($a2)
+jal get_board_color
+POP ($a2)
+POP ($a1)
+bgt $v1, 4, no_valid_color_hit
+beq $v1, 0, no_valid_color_hit
+j set_curr_color
+
+no_valid_color_hit: # valid color: color index in {1, 2, 3, 4}
+addi $a1, $a1, -1   # go up one cell
+j get_curr_color_loop
+
+set_curr_color:
+move $t0, $v1   # $t0 keeps track of the color of the first ball grabbed
+la $t1, carried_color
+sb $t0, 0($t1)  # save the color carried_color
+j grab_loop
+
+grab_loop:
+bltz $a1, find_and_grab_end   # end when reaching the top of board 
+PUSH ($a1)
+PUSH ($a2)
+jal get_board_color
+POP ($a2)
+POP ($a1)
+bne $v1, $t0, find_and_grab_end    # end the loop if curr color != color of the first ball grabbed
+li $a3, 0   # set to empty (grabbed)
+PUSH ($a1)
+PUSH ($a2)
+jal set_board_color
+POP ($a2)
+POP ($a1)
+la $t1, carried_count
+lb $t2, carried_count
+addiu $t2, $t2, 1   # increment number of carried balls
+sb $t2, 0($t1)
+addi $a1, $a1, -1
+j grab_loop
+
+find_and_grab_end:
+POP ($ra)
+jr $ra
 
 handle_throw:
 # TODO
@@ -163,6 +223,7 @@ j handle_end
 handle_end:
 POP ($ra)
 jr $ra
+
 
 ########################## Game-Specific Utils  #################################
 # repaint the player to the screen based on player_x, erasing the old position
@@ -270,11 +331,13 @@ jr $ra
 # $a1: y-coordinate
 # $a2: x-coordinate
 # $a3: color index
+# uses: $t1
 set_board_color: 
-srl $a1, $a1, 3
+sll $a1, $a1, 3
 addu $a1, $a1, $a2  # 8 * y + x
 addu $a1, $s1, $a1  # board address + offset
-sw $a3, 0($a1)
+sb $a3, 0($a1)
+jr $ra
 
 # get the board's color index at x, y
 # Args:
@@ -283,10 +346,11 @@ sw $a3, 0($a1)
 # Returns
 # $v1: color index
 get_board_color:
-srl $a1, $a1, 3
+sll $a1, $a1, 3
 addu $a1, $a1, $a2  # 8 * y + x
 addu $a1, $s1, $a1  # board address + offset
 lb $v1, 0($a1)
+jr $ra
 
 # save color to the board (does not print) given the (flat) index of the board
 # Args
