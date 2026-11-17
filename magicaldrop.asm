@@ -2,7 +2,7 @@
 # This file contains our implementation of Magical Drop.
 #
 # Student 1: Preston Cai, 1012556440
-# Student 2: Name, Student Number (if applicable)
+# Student 2: Andrei Berzin, 1012239481
 #
 # We assert that the code submitted here is entirely our own 
 # creation, and will indicate otherwise when it is not.
@@ -43,9 +43,25 @@ COLOR_MAP:  # color index: 0 is empty, 1 is red, 2 is green, 5 is white, ...
     .word 0x000000ff    # Blue
     .word 0x00ffff00    # Yellow
     .word 0x00ffffff    # White
+    .word 0x00AEA7A7    # light gray (for walls)
 
 ADDRESS_DSPL_BOARD_START:
     .word 0x10008388   # ADDR_DSPL + (32 * 7 + 2) * 4 = 904 = 388_hex (since our board starts at (8, 3))
+
+# Board Constants
+.eqv BOARD_X 2          # board starting horizontal pos
+.eqv BOARD_Y 7          # board starting vertical pos
+.eqv BOARD_COLS 8       # board no. of columns
+.eqv BOARD_ROWS 16      # board no. of rows
+.eqv PLAYER_Y 24        # vertical pos of player head
+.eqv WALL_COLOR 6       # wall color (gray)
+.eqv WALL_LEFT 1        # left wall x coordinate
+.eqv WALL_RIGHT 10      # right wall x coordinate
+.eqv WALL_TOP 6         # top wall y coordinate
+.eqv WALL_BOTTOM 23     # bottom wall y coordinate
+.eqv WALL_LENGTH_X 10   # wall length (horizontal)
+.eqv WALL_LENGTH_Y 18   # wall length (vertical)
+
 ##############################################################################
 # Mutable Data
 ##############################################################################
@@ -95,6 +111,7 @@ la $s1, board    # saved constant: board's memory address
 lw $s2, ADDR_DSPL    # saved constant: address of bitmap display
 lw $s3, ADDR_KBRD   # saved_constant: address of keyboard input
 jal draw_initial_board
+jal paint_walls
 jal paint_player
 j game_loop
 
@@ -232,21 +249,23 @@ paint_player:
 PUSH ($ra)
 jal clear_player_area
 lb $a2, player_x
-addiu $a2, $a2, 2    # player_x + 2 = player_x_on_bitmap
+addiu $a2, $a2, BOARD_X    # player_x + BOARD_X = player_x_on_bitmap
 # paint head (green)
-li $a1, 23
+li $a1, PLAYER_Y
 li $a3, 2
 PUSH ($a2)
 jal paint_pixel
 POP ($a2)
 # paint body 1 (white)
-li $a1, 24
+li $a1, PLAYER_Y
+addi $a1, $a1, 1
 li $a3, 5
 PUSH ($a2)
 jal paint_pixel
 POP ($a2)
 # paint body 2 (white)
-li $a1, 25
+li $a1, PLAYER_Y
+addi $a1, $a1, 2
 li $a3, 5
 PUSH ($a2)
 jal paint_pixel
@@ -254,7 +273,8 @@ POP ($a2)
 # paint balls
 lb $t1, carried_count
 lb $a3, carried_color
-li $a1, 26
+li $a1, PLAYER_Y
+addi $a1, $a1, 3
 bne $t1, 0, paint_carried_balls
 j paint_carried_balls_end
 
@@ -279,12 +299,12 @@ jr $ra
 # clear the area below the board
 # uses $t2, $t3 as x, y
 clear_player_area:
-li $t2, 2   # starting column: 2
+li $t2, BOARD_X   # starting column: 2
 j clear_loop
 
 clear_loop:
-beq $t2, 10, clear_done   # end when reaching column 10
-li $t3, 23  # highest row of player area: 24th row
+beq $t2, WALL_RIGHT, clear_done   # end when reached right wall
+li $t3, PLAYER_Y
 j clear_col
 
 clear_col:
@@ -383,6 +403,92 @@ addu $a1, $a1, $s2  # address of bitmap display (top left) + final offset = fina
 sw $a3, 0($a1)  # paint the pixel
 jr $ra
 
+
+# print a horizontal line of a given length
+# args:
+# $a1: y-coordinate
+# $a2: x-coordinate
+# $a3: colour index
+# $a0: length [units]
+# uses: $a0 (ends at 0), $a2 (ends at $a2 + $a0), $v1 & $t6 from paint_pixel
+paint_hline:
+PUSH($ra)
+# while remaining length > 0
+HLOOP: beq $a0, $zero, HLOOP_END
+PUSH($a1)
+PUSH($a3)
+jal paint_pixel
+POP($a3)
+POP($a1)
+# advance along x 
+addi $a2, $a2, 1
+# decrement remaining length
+addi $a0, $a0, -1
+j HLOOP
+HLOOP_END:
+POP($ra)
+jr $ra
+
+# print a vertical line of a given length
+# args:
+# $a1: y-coordinate
+# $a2: x-coordinate
+# $a3: colour index
+# $a0: length [units]
+# uses: $a0 (ends at 0), $a1 (ends at $a1 + $a0), $v1 & $t6 from paint_pixel
+paint_vline:
+PUSH($ra)
+# while remaining length > 0
+VLOOP: beq $a0, $zero, VLOOP_END
+PUSH($a1)
+PUSH($a3)
+jal paint_pixel
+POP($a3)
+POP($a1)
+# advance along y
+addi $a1, $a1, 1
+# decrement remaining length
+addi $a0, $a0, -1
+j VLOOP
+VLOOP_END:
+POP($ra)
+jr $ra
+
+paint_walls:
+# top wall, length 9
+li $a2, WALL_LEFT
+li $a1, WALL_TOP
+li $a3 WALL_COLOR
+li $a0, 9
+PUSH($ra)
+jal paint_hline
+POP($ra)
+# bottom wall, also length 9
+li $a2, WALL_LEFT
+li $a1, WALL_BOTTOM
+li $a3, WALL_COLOR
+li $a0, 9
+PUSH($ra)
+jal paint_hline
+POP($ra)
+# left wall, length 18
+li $a2, WALL_LEFT
+li $a1, WALL_TOP
+li $a3, WALL_COLOR
+li $a0, 18
+PUSH($ra)
+jal paint_vline
+POP($ra)
+# right wall, length 18
+li $a2, WALL_RIGHT
+li $a1, WALL_TOP
+li $a3, WALL_COLOR
+li $a0, 18
+PUSH($ra)
+jal paint_vline
+POP($ra)
+jr $ra
+
 # print the board on display based on the stored board color values
 # uses:
 # $t0: board index
@@ -410,8 +516,8 @@ lb $a3, 0($t7)  # get color index from board
 # calculate display address
 srl $t4, $a0, 3     # row on the board
 andi $t5, $a0, 7    # column on the board
-addi $a1, $t4, 6    # y-coordinate on the bitmap (starting pixel of board (3, 7))
-addi $a2, $t5, 2    # x-coordinate on the bitmap
+addi $a1, $t4, BOARD_Y    # y-coordinate on the bitmap
+addi $a2, $t5, BOARD_X    # x-coordinate on the bitmap
 # paint pixel
 PUSH ($ra)
 jal paint_pixel
