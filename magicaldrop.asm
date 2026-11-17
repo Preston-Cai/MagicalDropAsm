@@ -59,8 +59,7 @@ ADDRESS_DSPL_BOARD_START:
 .eqv WALL_RIGHT 10      # right wall x coordinate
 .eqv WALL_TOP 6         # top wall y coordinate
 .eqv WALL_BOTTOM 23     # bottom wall y coordinate
-.eqv WALL_LENGTH_X 10   # wall length (horizontal)
-.eqv WALL_LENGTH_Y 18   # wall length (vertical)
+
 
 ##############################################################################
 # Mutable Data
