@@ -185,8 +185,8 @@ handle_input:
 lw $t1, 4($s3)   # key pressed in ascii
 beq $t1, 0x61, handle_left
 beq $t1, 0x64, handle_right
-beq $t1, 0x77, handle_grab      # key w
-beq $t1, 0x73, handle_throw     # key s
+beq $t1, 0x73, handle_grab      # key s
+beq $t1, 0x77, handle_throw     # key w
 
 # uses: $t1, $t2
 handle_left:
