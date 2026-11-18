@@ -270,8 +270,39 @@ find_and_grab_end:
 POP ($ra)
 jr $ra
 
+# ues: $a1, $a2, $a3, $v1, $t1, $t2
 handle_throw:
-# TODO
+lb $a2, player_x
+PUSH ($a2)
+jal find_highest_empty
+POP ($a2)
+move $a1, $v1
+lb $t1, carried_count
+la $t2, carried_count
+lb $a3, carried_color
+j push_balls
+
+# throw balls starting at y in the column x
+# $a2: x
+# $a1: y (starting cell to draw)
+push_balls:
+beq $a1, 31, game_over  # when throwing too many balls and it reaches the bottom
+beq $t1, 0, push_balls_end  # pushed all balls
+PUSH ($a3)
+PUSH ($a2)
+PUSH ($a1)
+jal set_board_color
+POP ($a1)
+POP ($a2)
+POP ($a3)
+addi $t1, $t1, -1
+sb $t1, 0($t2)  # decrement num of carried balls
+addiu $a1, $a1, 1   # move one cell below
+j push_balls
+
+push_balls_end:
+jal paint_board
+jal paint_player
 j handle_end
 
 handle_end:
@@ -282,6 +313,10 @@ jr $ra
 ########################## Game-Specific Utils  #################################
 # repaint the player to the screen based on player_x, erasing the old position
 # uses: $a1, $a2, $a3, $t1
+
+game_over:
+j quit
+
 paint_player:
 PUSH ($ra)
 jal clear_player_area
@@ -362,6 +397,33 @@ j clear_loop
 clear_done:
 jr $ra
 
+# find, on the board, the highest cell in col $a1 that's empty
+# args: $a2: player_x value 
+# uses: $a1: y value
+# uses: $v1
+# returns: $v1: the highest y value
+find_highest_empty:
+PUSH ($ra)
+li $a1, 15
+PUSH ($a1)
+jal get_board_color
+POP ($a1)
+bne $v1, 0, game_over   # if non-emtpy is already at the bottom, game over
+j find_highest_empty_loop 
+
+find_highest_empty_loop:
+bltz $a1, find_highest_empty_end
+PUSH ($a1)
+jal get_board_color
+POP ($a1)
+bne $v1, 0, find_highest_empty_end
+addi $a1, $a1, -1
+j find_highest_empty_loop
+
+find_highest_empty_end:
+add $v1, $a1, 1
+POP ($ra)
+jr $ra
 
 ########################## General Util Functions ###############################
 # randomly select one of RGBY color index (1-4)
@@ -398,7 +460,7 @@ jr $ra
 
 # get the board's color index at x, y
 # Args:
-# $a1: y-coordinate
+# $a1: y-coordinate ($a1 gets MODIFIED!!)
 # $a2: x-coordinate
 # Returns
 # $v1: color index
