@@ -60,6 +60,9 @@ ADDRESS_DSPL_BOARD_START:
 .eqv WALL_TOP 6         # top wall y coordinate
 .eqv WALL_BOTTOM 23     # bottom wall y coordinate
 
+# Row Advancement Trigger
+.eqv ADVANCE_EVERY 10
+
 ##############################################################################
 # Mutable Data
 ##############################################################################
@@ -73,6 +76,8 @@ carried_color:  # color index only needs 1 byte
     .space 1
 player_x:
     .byte 3    # position of player on the board (0-7, as there are 8 columns)
+keystroke_counter:
+    .byte 0    # number of keystrokes pressed so far. Resets & calls advance_row once it reaches 10.
 
 # Scoreboard letter bitmaps
 # All letters are 3x5. 0 means empty (black), 5 is white.
@@ -182,7 +187,17 @@ beq $t1, 1, handle_input
 j handle_end
 
 handle_input:
-lw $t1, 4($s3)   # key pressed in ascii
+# increment keystroke counter
+la $t0, keystroke_counter
+lb $t2, 0($t0)
+addi $t2, $t2, 1
+sb $t2, 0($t0)
+bne $t2, ADVANCE_EVERY, SKIP_ADVANCE
+# reset counter to zero
+sb $zero, 0($t0)
+jal advance_rows
+SKIP_ADVANCE:
+lw $t1, 4($s3)   # which key pressed in ascii
 beq $t1, 0x61, handle_left
 beq $t1, 0x64, handle_right
 beq $t1, 0x73, handle_grab      # key s
@@ -425,6 +440,54 @@ j find_highest_empty_loop
 find_highest_empty_end:
 add $v1, $a1, 1
 POP ($ra)
+jr $ra
+
+advance_rows:
+PUSH($ra)
+li $t0, 127   # load last board index
+ADVANCE_LOOP:
+# while i >= 8 (first board index)
+beq $t0, 7, ADVANCE_LOOP_END
+# compute source address ($s1 + index - BOARD_COLS)
+addi $t1, $s1, -BOARD_COLS
+add $t1, $t1, $t0
+# load from source and store at $s1 + index
+lb $t2, 0($t1)
+sb $t2, BOARD_COLS($t1)
+# decrement index
+addi $t0, $t0, -1
+j ADVANCE_LOOP
+ADVANCE_LOOP_END:
+# restore index to 0
+li $t0, 0
+REFILL_LOOP:
+beq $t0, BOARD_COLS, REFILL_LOOP_END
+# get & save random color
+jal rand
+move $a0, $v1
+move $a1, $t0
+jal save_color
+#increment index
+addi $t0, $t0, 1
+j REFILL_LOOP
+REFILL_LOOP_END:
+# repaint the board
+jal paint_board
+# Game over check, loop over last 8 indices.
+# if color at that pixel is not empty -> game over.
+# reset index
+li $t0, 120
+GAME_OVER_LOOP:
+beq $t0, 128, GAME_OVER_LOOP_END
+# load current board pixel
+addu $t1, $s1, $t0
+lb $t2, 0($t1)
+bne $t2, 0, game_over
+# increment index
+addi $t0, $t0, 1
+j GAME_OVER_LOOP
+GAME_OVER_LOOP_END:
+POP($ra)
 jr $ra
 
 ########################## General Util Functions ###############################
