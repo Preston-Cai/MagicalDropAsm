@@ -46,7 +46,7 @@ COLOR_MAP:  # color index: 0 is empty, 1 is red, 2 is green, 5 is white, ...
     .word 0x00AEA7A7    # light gray (for walls)
 
 ADDRESS_DSPL_BOARD_START:
-    .word 0x10008388   # ADDR_DSPL + (32 * 7 + 2) * 4 = 904 = 388_hex (since our board starts at (8, 3))
+    .word 0x10008388   # ADDR_DSPL + (32 * 7 + 2) * 4 = 904 = 388_hex (since our board starts at (7, 2))
 
 # Board Constants
 .eqv BOARD_X 2          # board starting horizontal pos
@@ -69,7 +69,7 @@ ADDRESS_DSPL_BOARD_START:
 board:  # containing colors (a byte per cell, each byte contains the color index)
     .space 128  # 8 columns, 16 rows
 score:
-    .word 0   # maximum score 2^32
+    .word 0   # maximum score 2^32 - 1
 carried_count:
     .byte 0
 carried_color:  # color index only needs 1 byte
@@ -78,6 +78,10 @@ player_x:
     .byte 3    # position of player on the board (0-7, as there are 8 columns)
 keystroke_counter:
     .byte 0    # number of keystrokes pressed so far. Resets & calls advance_row once it reaches 10.
+match:
+    .byte 0     # 1 or 0, whether there is a match
+    .byte 0     # how many matches (0-8, 8 columns => at most 8 vertical matches formed)
+    .space 24   # 3 * 8, for each: color index - 1 byte, (x, y) on board of one bubble in the match - 2 bytes
 
 # Scoreboard letter bitmaps
 # All letters are 3x5. 0 means empty (black), 5 is white.
@@ -119,7 +123,7 @@ game_loop:
     # 2a. Check for collisions
 	# 2b. Update locations (capsules)
 	# 3. Draw the screen
-
+    jal destroy_bubbles     # find matches, destroy all connected, apply gravity, find matches, ..., until no more matches
 	# 4. Sleep
 	li $v0, 32
 	li $a0, 16
@@ -137,6 +141,7 @@ la $s0, COLOR_MAP   # saved constant: color map array's address
 la $s1, board    # saved constant: board's memory address
 lw $s2, ADDR_DSPL    # saved constant: address of bitmap display
 lw $s3, ADDR_KBRD   # saved_constant: address of keyboard input
+la $s4, match
 jal draw_initial_board
 jal paint_walls
 # load & draw P at (18, 7)
@@ -303,7 +308,7 @@ j push_balls
 # $a2: x
 # $a1: y (starting cell to draw)
 push_balls:
-beq $a1, 31, game_over  # when throwing too many balls and it reaches the bottom
+beq $a1, 15, game_over  # when throwing too many balls and it reaches the bottom
 beq $t1, 0, push_balls_end  # pushed all balls
 PUSH ($a3)
 PUSH ($a2)
@@ -326,7 +331,202 @@ handle_end:
 POP ($ra)
 jr $ra
 
+########################## Bubble destruction logic #############################
+# Uses: $t0-$t5, $a1-$a3
+# find match, find connected, destroy, apply gravity, repeat, until no more matches
+destroy_bubbles:
+PUSH ($ra)
 
+destroy_bubbles_repeat:
+jal find_matches
+lb $t0, 0($s4)
+beq $t0, 0, destroy_bubbles_end     # no matches
+lb $t0, 1($s4)  # number of matches
+li $t1, 0
+j cleanup_loop
+
+# looping through $s4 to apply find-connected algorithm to one bubble in each match
+# $t1: the index of current match being handled
+# $t2: calculated address of the current match
+# $t5: current color index of match
+# $t4, $t3: current x, y on the board for one of the bubbles in the current match
+cleanup_loop:
+beq $t1, $t0, apply_gravity     # all matches have been handled
+li $t2, 3   # 3 bytes for each match
+mul $t2, $t1, $t2
+addu $t2, $t2, $s4  # calculate the address for current match
+lb $t5, 2($t2)
+lb $t4, 3($t2)
+lb $t3, 4($t2)
+PUSH ($t0)
+PUSH ($t1)
+jal clean_up
+POP ($t1)
+POP ($t0)
+addiu $t1, $t1, 1
+j cleanup_loop
+
+# find and check adjacent recursively, and set all connected bubbles emtpy on the board
+# args: $t5 (color index), $t4 (x-coordinate), $t3 (y-coordinate)
+clean_up:
+PUSH ($ra)
+move $a1, $t3
+move $a2, $t4
+li $a3, 0
+jal set_board_color  # set this cell to empty
+
+check_above:
+beq $t3, 0, check_below
+addi $a1, $t3, -1
+move $a2, $t4
+jal get_board_color
+bne $v1, $t5, check_below   # compare adjacent color vs current cell color
+PUSH ($t3)  # save $t3, $t4 as they will be modified in the recursion
+PUSH ($t4)
+add $t3, $t3, -1
+jal clean_up
+POP ($t4)
+POP ($t3)
+
+check_below:
+beq $t3, 15, check_right
+addi $a1, $t3, 1
+move $a2, $t4
+jal get_board_color
+bne $v1, $t5, check_right   # compare adjacent color vs current cell color
+PUSH ($t3)  # save $t3, $t4 as they will be modified in the recursion
+PUSH ($t4)
+add $t3, $t3, 1
+jal clean_up
+POP ($t4)
+POP ($t3)
+
+check_right:
+beq $t4, 7, check_left
+move $a1, $t3
+addi $a2, $t4, 1
+jal get_board_color
+bne $v1, $t5, check_left   # compare adjacent color vs current cell color
+PUSH ($t3)  # save $t3, $t4 as they will be modified in the recursion
+PUSH ($t4)
+add $t4, $t4, 1
+jal clean_up
+POP ($t4)
+POP ($t3)
+
+check_left:
+beq $t4, 0, cleanup_done
+move $a1, $t3
+addi $a2, $t4, -1
+jal get_board_color
+bne $v1, $t5, cleanup_done   # compare adjacent color vs current cell color
+PUSH ($t3)  # save $t3, $t4 as they will be modified in the recursion
+PUSH ($t4)
+add $t4, $t4, -1
+jal clean_up
+POP ($t4)
+POP ($t3)
+
+cleanup_done:
+POP ($ra)
+jr $ra
+
+# find matches in every column and save in match ($s4)
+# $t0: current column index
+# $t4: number of matches found so far (incremented by find_match if there's a match)
+find_matches:
+PUSH ($ra)
+li $t0, 0
+li $t4, 0
+sb $t4, 0($s4)  # initialize with no match indicator
+
+find_matches_loop:
+beq $t0, 8, find_matches_end    # checked every column
+move $a2, $t0
+jal find_match
+addiu $t0, $t0, 1
+j find_matches_loop
+
+find_matches_end:
+beq $t4, 0, matches_end
+sb $t4, 1($s4)  # save number of matches
+li $t4, 1
+sb $t4, 0($s4)  # indicate there are matches
+
+matches_end:
+POP ($ra)
+jr $ra
+
+# apply gravity to the board and update its state
+apply_gravity:
+# TODO
+j destroy_bubbles_repeat   # repeat after gravity is applied
+
+destroy_bubbles_end:
+jal paint_board
+POP ($ra)
+jr $ra
+
+###### utils for destruction logic ######
+# find the match (there should be only 1) in a specified column on the board (implemented with two pointers)
+# args: $a2: x-coordinate of the column
+# uses:
+# $a1: lead pointer (y-coordinate in the column)
+# $t1: trail pointer (y-coordinate in the column)
+# $t2: previous color
+# $t3: temporarily store length of segment found and the offsetted address for match
+# $a2: arg for get_board_color
+# $v1: current color returned by get_board_color
+find_match:
+PUSH ($ra)
+li $a1, 15  # start from bottom
+li $t1, 15
+PUSH ($a1)
+PUSH ($a2)
+PUSH ($t1)
+jal get_board_color
+POP ($t1)
+POP ($a2)
+POP ($a1)
+move $t2, $v1
+
+find_match_loop:
+addi $a1, $a1, -1
+bltz $a1, check_match   # reaching the top
+PUSH ($a1)
+PUSH ($a2)
+PUSH ($t1)
+jal get_board_color
+POP ($t1)
+POP ($a2)
+POP ($a1)
+bne $v1, $t2, check_match
+j find_match_loop
+
+# check whether the current segment is a valid match
+check_match:
+beq $t2, 0, find_match_continue     # this segment is all black
+sub $t3, $t1, $a1   # length of segment
+beq $t3, 1, find_match_continue     # length less than 3
+beq $t3, 2, find_match_continue
+li $t3, 3   # in memory, each match is 3-byte long
+mul $t3, $t3, $t4   # multiply by number of matches so far
+addu $t3, $t3, $s4  # calculate final address for this match
+sb $t2, 2($t3)  # save color, x, y to memory
+sb $t0, 3($t3)
+sb $t1, 4($t3)
+addiu $t4, $t4, 1   # increment match count
+j find_match_end
+
+find_match_continue:
+bltz $a1, find_match_end   # reaching the top, no more opportunities for this column
+move $t1, $a1   # align the two pointers
+move $t2, $v1   # align the colors
+j find_match_loop
+
+find_match_end:
+POP ($ra)
+jr $ra
 ########################## Game-Specific Utils  #################################
 # repaint the player to the screen based on player_x, erasing the old position
 # uses: $a1, $a2, $a3, $t1
@@ -492,7 +692,7 @@ jr $ra
 
 ########################## General Util Functions ###############################
 # randomly select one of RGBY color index (1-4)
-# returns: $v0
+# returns: $v1
 # uses: $v0, $a0, $a1
 rand:
 li $v0, 42
@@ -512,7 +712,7 @@ jr $ra
 
 # update the board (does not print) given x, y coordinate and color
 # Args:
-# $a1: y-coordinate
+# $a1: y-coordinate ($a1 gets MODIFIED!!)
 # $a2: x-coordinate
 # $a3: color index
 # uses: $t1
