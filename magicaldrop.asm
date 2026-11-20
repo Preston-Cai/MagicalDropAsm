@@ -123,8 +123,6 @@ game_loop:
     # 2a. Check for collisions
 	# 2b. Update locations (capsules)
 	# 3. Draw the screen
-    jal destroy_bubbles     # find matches, destroy all connected, apply gravity, find matches, ..., until no more matches
-	# 4. Sleep
 	li $v0, 32
 	li $a0, 16
 	syscall
@@ -325,6 +323,7 @@ j push_balls
 push_balls_end:
 jal paint_board
 jal paint_player
+jal destroy_bubbles     # find matches, destroy all connected, apply gravity, find matches, ..., until no more matches
 j handle_end
 
 handle_end:
@@ -336,6 +335,16 @@ jr $ra
 # find match, find connected, destroy, apply gravity, repeat, until no more matches
 destroy_bubbles:
 PUSH ($ra)
+# initially, only find the first match on the player's column (after player just throws)
+lb $a2, player_x
+li $t4, 0
+jal find_match
+beq $t4, 0, destroy_bubbles_end     # no match in player column
+li $t0, 1   # prepare for cleanup_loop bound
+sb $t0, 0($s4)
+sb $t0, 1($s4)
+li $t1, 0   # init for cleanup_loop
+j cleanup_loop
 
 destroy_bubbles_repeat:
 jal find_matches
@@ -468,7 +477,8 @@ POP ($ra)
 jr $ra
 
 ###### utils for destruction logic ######
-# find the match (there should be only 1) in a specified column on the board (implemented with two pointers)
+# find the first match in a specified column on the board (implemented with two pointers)
+# only increments $t4 and save the matches, but does not save the count or match-existence indicator to memory
 # args: $a2: x-coordinate of the column
 # uses:
 # $a1: lead pointer (y-coordinate in the column)
