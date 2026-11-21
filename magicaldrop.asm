@@ -24,6 +24,44 @@
     addiu $sp, $sp, 4
 .end_macro
 
+# push temp registers (used for animation convenience to invoke paint_board)
+.macro PUSH_ALL ()
+    PUSH ($ra)
+    PUSH ($t0)
+    PUSH ($t1)
+    PUSH ($t2)
+    PUSH ($t3)
+    PUSH ($t4)
+    PUSH ($t5)
+    PUSH ($t6)
+    PUSH ($t7)
+    PUSH ($t8)
+    PUSH ($t9)
+    PUSH ($a0)
+    PUSH ($a1)
+    PUSH ($a2)
+    PUSH ($a3)
+.end_macro
+
+.macro POP_ALL ()
+    POP ($a3)
+    POP ($a2)
+    POP ($a1)
+    POP ($a0)
+    POP ($t9)
+    POP ($t8)
+    POP ($t7)
+    POP ($t6)
+    POP ($t5)
+    POP ($t4)
+    POP ($t3)
+    POP ($t2)
+    POP ($t1)
+    POP ($t0)
+    POP ($ra)
+.end_macro
+        
+
 ##############################################################################
     .data
 ##############################################################################
@@ -138,6 +176,20 @@ game_loop:
 quit:
 li $v0, 10
 syscall
+
+# sleep for 0.1s
+sleep_animation_slow:
+li $v0, 32
+li $a0, 100
+syscall
+jr $ra
+
+# sleep for 0.02s
+sleep_animation_fast:
+li $v0, 32
+li $a0, 20
+syscall
+jr $ra
     
 init:
 la $s0, COLOR_MAP   # saved constant: color map array's address
@@ -145,7 +197,7 @@ la $s1, board    # saved constant: board's memory address
 lw $s2, ADDR_DSPL    # saved constant: address of bitmap display
 lw $s3, ADDR_KBRD   # saved_constant: address of keyboard input
 la $s4, match
-jal draw_initial_board
+la $s5, gravity_columns
 jal paint_walls
 # load & draw P at (18, 7)
 la $a0, LETTER_P
@@ -163,6 +215,7 @@ li $a1, 7
 li $a2, 26
 jal paint_letter
 jal paint_player
+jal draw_initial_board
 j game_loop
 
 # $t0: loop index; $t1: current address
@@ -178,6 +231,10 @@ jal rand
 move $a0, $v1
 move $a1, $t0
 jal save_color
+PUSH_ALL ()
+jal sleep_animation_fast
+jal paint_board
+POP_ALL ()
 addi $t0, $t0, 1    # next byte on the board
 j draw_initial_board_loop
 
@@ -336,7 +393,7 @@ POP ($ra)
 jr $ra
 
 ########################## Bubble destruction logic #############################
-# Uses: $t0-$t5, $a1-$a3
+# Uses: $t0-$t7, $a1-$a3
 # find match, find connected, destroy, apply gravity, repeat, until no more matches
 destroy_bubbles:
 PUSH ($ra)
@@ -388,6 +445,10 @@ move $a1, $t3
 move $a2, $t4
 li $a3, 0
 jal set_board_color  # set this cell to empty
+PUSH_ALL ()
+jal sleep_animation_slow
+jal paint_board
+POP_ALL ()
 
 check_above:
 beq $t3, 0, check_below
@@ -445,9 +506,11 @@ cleanup_done:
 POP ($ra)
 jr $ra
 
-# find matches in every column and save in match ($s4)
+# find matches in columns with value 1 in gravity_columns ($s5) and save in match ($s4)
 # $t0: current column index
 # $t4: number of matches found so far (incremented by find_match if there's a match)
+# $t6: current value in gravity_columns
+# $t7: current address in gravity_columns
 find_matches:
 PUSH ($ra)
 li $t0, 0
@@ -456,8 +519,13 @@ sb $t4, 0($s4)  # initialize with no match indicator
 
 find_matches_loop:
 beq $t0, 8, find_matches_end    # checked every column
+addu $t7, $t0, $s5
+lb $t6, 0($s5)
+beq $t6, 0, find_matches_loop_continue
 move $a2, $t0
 jal find_match
+
+find_matches_loop_continue:
 addiu $t0, $t0, 1
 j find_matches_loop
 
@@ -472,7 +540,6 @@ POP ($ra)
 jr $ra
 
 # apply gravity to the board and update its state
-
 apply_gravity:
 # initialize index and pointer
 li $t0, 0
@@ -503,6 +570,10 @@ sb $zero, 0($t2)
 addu $t6, $t1, $t0
 li $t7, 1
 sb $t7, 0($t6)
+PUSH_ALL ()
+jal sleep_animation_slow
+jal paint_board
+POP_ALL ()
 ADVANCE_WRITE:
 addi $t3, $t3, BOARD_COLS
 ADVANCE_READ:
@@ -567,7 +638,7 @@ li $t3, 3   # in memory, each match is 3-byte long
 mul $t3, $t3, $t4   # multiply by number of matches so far
 addu $t3, $t3, $s4  # calculate final address for this match
 sb $t2, 2($t3)  # save color, x, y to memory
-sb $t0, 3($t3)
+sb $a2, 3($t3)
 sb $t1, 4($t3)
 addiu $t4, $t4, 1   # increment match count
 j find_match_end
@@ -959,6 +1030,7 @@ jr $ra
 # print the board on display based on the stored board color values
 # uses:
 # $t0: board index
+# $a0: arg for paint_cell
 paint_board:
 PUSH ($ra)
 add $t0, $zero, $zero
