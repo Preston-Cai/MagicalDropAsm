@@ -82,6 +82,11 @@ match:
     .byte 0     # 1 or 0, whether there is a match
     .byte 0     # how many matches (0-8, 8 columns => at most 8 vertical matches formed)
     .space 24   # 3 * 8, for each: color index - 1 byte, (x, y) on board of one bubble in the match - 2 bytes
+    
+# Columns affected by gravity.
+# 0 = unchanged, 1 = changed in the CURRENT TURN
+gravity_columns:
+.space BOARD_COLS
 
 # Scoreboard letter bitmaps
 # All letters are 3x5. 0 means empty (black), 5 is white.
@@ -467,8 +472,47 @@ POP ($ra)
 jr $ra
 
 # apply gravity to the board and update its state
+
 apply_gravity:
-# TODO
+# initialize index and pointer
+li $t0, 0
+la $t1, gravity_columns
+INIT_LOOP:
+beq $t0, BOARD_COLS, INIT_LOOP_END
+# store 0 in curr byte
+sb $zero, 0($t1)
+addi $t1, $t1, 1
+addi $t0, $t0, 1
+j INIT_LOOP
+INIT_LOOP_END:
+la $t1, gravity_columns
+# reuse $t0 as counter - reset
+li $t0, 0
+GRAVITY_LOOP:
+beq $t0, BOARD_COLS, GRAVITY_LOOP_END
+addu $t2, $s1, $t0  # set read pointer to board + col
+addu $t3, $s1, $t0  # set write pointer to board + col
+li $t4, 0          # initialize row counter
+GRAVITY_INNER_LOOP:
+beq $t4, BOARD_ROWS, GRAVITY_INNER_LOOP_END
+lbu $t5, 0($t2)     # load color at row=read, col = col counter
+beq $t5, $zero, ADVANCE_READ # if pixel is empty, advance read pointer
+beq $t2, $t3, ADVANCE_WRITE  # if read == write, advance write pointer
+sb $t5, 0($t3)
+sb $zero, 0($t2)
+addu $t6, $t1, $t0
+li $t7, 1
+sb $t7, 0($t6)
+ADVANCE_WRITE:
+addi $t3, $t3, BOARD_COLS
+ADVANCE_READ:
+addi $t2, $t2, BOARD_COLS
+addi $t4, $t4, 1
+j GRAVITY_INNER_LOOP
+GRAVITY_INNER_LOOP_END:
+addi $t0, $t0, 1
+j GRAVITY_LOOP
+GRAVITY_LOOP_END:
 j destroy_bubbles_repeat   # repeat after gravity is applied
 
 destroy_bubbles_end:
